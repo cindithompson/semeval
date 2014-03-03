@@ -2,6 +2,7 @@ __author__ = 'Steven'
 import xml.etree.ElementTree as ET
 import pickle
 import string
+import nltk
 
 
 def pickle_laptop_data(filename):
@@ -28,7 +29,66 @@ def pickle_laptop_data(filename):
 
 
 #the term, polarity, from, and to are attrib's of the aspectTerm elements
+#version that just assumes a single occ of each aspect term (or tags all seen as part of aspect term)
 def create_exs(filename):
+    """ Create a set of training examples from a semeval XML file
+    """
+    examples = []
+    polarities = []
+    text = []
+    tree = ET.parse(filename)
+    root = tree.getroot()
+    for sentence in root.findall('sentence'):
+        #words = sentence[0].text #assumes text comes first
+        words = sentence.find('text').text.strip()
+        a_terms = sentence.find('aspectTerms')
+        sentiments = []
+        terms = []
+        if a_terms is not None:
+            for at in a_terms:
+                terms.append(at.attrib['term'])
+                sentiments.append(at.attrib['polarity'])
+        seq = create_POS_ex(words, terms)
+        examples.append(seq)
+        polarities.append(sentiments)
+        text.append(words)
+    return {'orig': text, 'iob': examples, 'polarity': polarities}
+
+
+def create_POS_ex(sentence, words):
+    #split phrases in words into pieces
+    starts, continuations = split_words(words)
+    pos_tags = nltk.pos_tag(nltk.word_tokenize(sentence))
+    iob = []
+    it = iter(pos_tags)
+    for w,ptag in it:
+        if w in starts:
+            iob.append((w, ptag, 'B-Aspect'))
+            in_term = True
+            while in_term:
+                wd,ptag = it.next()
+                if wd in continuations:
+                    iob.append((wd, ptag, 'I-Aspect'))
+                else:
+                    in_term = False
+                    iob.append((wd, ptag, 'O'))
+        else:
+            iob.append((w, ptag, 'O'))
+    return iob
+
+
+def split_words(words):
+    first_wds = []
+    rest_wds = []
+    for word in words:
+        tokens = word.split()
+        first_wds.append(tokens[0])
+        rest_wds.extend(tokens[1:])
+    return first_wds, rest_wds
+
+
+
+def create_exs_older(filename):
     """ Create a set of training examples from a semeval XML file
     """
     examples = []
@@ -47,13 +107,15 @@ def create_exs(filename):
                 froms.append(int(at.attrib['from']))
                 tos.append(int(at.attrib['to']))
                 sentiments.append(at.attrib['polarity'])
-        seq = create_one_ex(words, froms, tos)
+        ###seq = create_one_ex(words, froms, tos)
+        seq = create_one_withPOS(words, froms, tos)
         examples.append(seq)
         polarities.append(sentiments)
         text.append(words)
     return {'orig': text, 'iob': examples, 'polarity': polarities}
 
 
+#older version without POS tags
 def create_one_ex(sent, froms, tos):
     """ given a sentence and the positions of the aspect terms in the sentence,
     return a list of word/tag pairs, where the tags are IOB indicating in, begin, or out of a aspect term
@@ -64,7 +126,6 @@ def create_one_ex(sent, froms, tos):
     iob = []
     it = iter(words)
     for w in it:
-        #print "w: %s, cidx: %d" %(w, cidx)
         if cidx in froms:
             iob.append(create_seq_ele(w, 'B-Aspect'))
             a_idx = froms.index(cidx)
@@ -81,9 +142,32 @@ def create_one_ex(sent, froms, tos):
     return iob
 
 
+#doesn't work with punctuation, putting on back burner
+def create_one_withPOS(sent, froms, tos):
+    pos_tags = nltk.pos_tag(nltk.word_tokenize(sent))
+    cidx = 0
+    iob = []
+    it = iter(pos_tags)
+    for w,ptag in it:
+        if cidx in froms:
+            iob.append((w, ptag, 'B-Aspect'))
+            a_idx = froms.index(cidx)
+            to = tos[a_idx]
+            cidx += len(w) + 1
+            while cidx < to:
+                wd,ptag = it.next()
+                iob.append((wd, ptag, 'I-Aspect'))
+                cidx += len(wd) + 1
+        else:
+            iob.append((w, ptag, 'O'))
+            cidx += len(w) + 1
+    #print "final IOB", iob
+    return iob
+
+
 def create_seq_ele(word, tag):
-    ''' Dummy POS tags for now
-    '''
+    """ Dummy POS tags for now
+    """
     return word.strip(string.punctuation), 'dummy', tag
 
 
@@ -141,7 +225,6 @@ def term2categories():
     #print restaurants_categories
 
 
-
 def show_term():
     """
     show the result of parsing the xml file
@@ -160,5 +243,7 @@ def show_term():
 if __name__ == '__main__':
     #pickle_laptop_data('Laptops_Train.xml')
     #pickle_restaurants_dataset('Restaurants_Train.xml')
-    show_term()
-    term2categories()
+    #show_term()
+    #term2categories()
+
+    print create_exs('restaurants-trial.xml')
