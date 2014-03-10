@@ -3,6 +3,7 @@ import XMLParser
 import nltk
 from collections import defaultdict
 import re
+import cPickle
 
 
 class ConsecutiveChunkTagger(nltk.TaggerI):
@@ -30,13 +31,16 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
             for i, (_word, _pos, tag) in enumerate(tagged_sent):
                 #these will get thrown away except for in the nbhd of aspect terms
                 feature_set = chunk_features(tagged_sent, i, sent_dict, history)
-                history.append(tag)
                 if tag.startswith('B'):
-                    feature_set['hi_lvl_pos_senti'] = sentiment[0]
-                    feature_set['hi_lvl_neg_senti'] = sentiment[1]
+                    # TODO is more experiments on larger set to see which of the below makes most sense
+                    #feature_set['hi_lvl_pos_senti'] = sentiment[0]
+                    #feature_set['hi_lvl_neg_senti'] = sentiment[1]
+                    feature_set['hi_lvl_senti'] = sentiment[0]-sentiment[1]
+                    #feature_set['hi_lvl_senti'] = sentiment[0] > sentiment[1]
                     feature_set['num_aspects'] = len(aspect_tags)
                     feature_set.update(get_head_features(tagged_sent, i, sent_dict))
                     train_set.append((feature_set, aspect_tags[n_aspect]))
+                    history.append(aspect_tags[n_aspect])
                     #print "adding example:", (feature_set, aspect_tags[n_aspect])
                     n_aspect += 1
 
@@ -58,8 +62,9 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
         for i, (_word, _pos, tag) in enumerate(words):
             feature_set = chunk_features(words, i, self.sent_dict, history)
             if tag.startswith('B'):
-                feature_set['hi_lvl_pos_senti'] = sentiment[0]
-                feature_set['hi_lvl_neg_senti'] = sentiment[1]
+                #feature_set['hi_lvl_pos_senti'] = sentiment[0]
+                #feature_set['hi_lvl_neg_senti'] = sentiment[1]
+                feature_set['hi_lvl_senti'] = sentiment[0] - sentiment[1]
                 feature_set['num_aspects'] = num_aspects
                 feature_set.update(get_head_features(words, i, self.sent_dict))
                 label = self.classifier.classify(feature_set)
@@ -107,16 +112,18 @@ def get_head_features(sentence, i, sent_dict):
     word/POS/sentiment before the whole phrase from the chunk_features method).
     """
     word, pos, iob = sentence[i]
+    #print word, pos, iob, i
+    #print sentence
     #find head
     found_head = False
     while not found_head:
-        if len(sentence) >= i:
+        if len(sentence) > i+1:
             n_w, n_pos, n_iob = sentence[i+1]
             if n_iob.startswith('O') or n_iob.startswith('B'):
                 found_head = True
             else:
                 i += 1
-            word, pos, iob = sentence[i]
+                word, pos, iob = sentence[i]
         else:
             found_head = True
     sentiment = sentiment_lookup(sent_dict, word, pos)
@@ -127,7 +134,8 @@ def get_head_features(sentence, i, sent_dict):
     else:
         nextw, nextpos, next_tag = sentence[i+1]
         next_sentiment = sentiment_lookup(sent_dict, nextw, nextpos)
-    return {'word': word, 'pos': pos, 'iob': iob, 'sentiment': sentiment, 'nextw': nextw, 'nextpos': nextpos,
+    return {'word': word, 'pos': pos, #'iob': iob,
+            'sentiment': sentiment, 'nextw': nextw, 'nextpos': nextpos,
             'nextiob': next_tag, 'next_sentiment': next_sentiment}
 
 
@@ -144,6 +152,10 @@ def chunk_features(sentence, i, sent_dict, history):
     else:
         prevw, prevpos, prevtag = sentence[i-1]
         prev_sentiment = sentiment_lookup(sent_dict, prevw, prevpos)
+    if len(history) > 0:
+        prev_class = history[-1]
+    else:
+        prev_class = "<START>"
     if i == len(sentence)-1:
         nextw, nextpos = "<END>", "<END>"
         next_sentiment = "<END>"
@@ -152,7 +164,9 @@ def chunk_features(sentence, i, sent_dict, history):
         nextw, nextpos, next_tag = sentence[i+1]
         next_sentiment = sentiment_lookup(sent_dict, nextw, nextpos)
 
-    return {'word': word, 'pos': pos, 'iob': iob, 'sentiment': sentiment,
+    return {'word': word, 'pos': pos, #'iob': iob,
+            'sentiment': sentiment,
+            'prev_classification': prev_class,
             'prevwd': prevw, 'prevpos': prevpos, 'previob': prevtag, 'prev_sentiment': prev_sentiment,
             'nextw': nextw, 'nextpos': nextpos, 'nextiob': next_tag, 'next_sentiment': next_sentiment}
 
@@ -197,11 +211,16 @@ def senti_classify(sentence, pdict, ndict):
     return pcount, ncount
 
 
-def train_and_test(filename, posit_lex_file, nega_lex_file):
+def train_and_test(filename, posit_lex_file='positive-words.txt', nega_lex_file='negative-words.txt', pickled=False):
     """Creates an 80/20 split of the examples in filename,
     trains the sentiment classifier on 80%, and evaluates the learned classifier on 20%.
     """
-    traind = XMLParser.create_exs(filename)
+    if pickled:
+        f = open(filename, 'rb')
+        traind = cPickle.load(f)
+        f.close()
+    else:
+        traind = XMLParser.create_exs(filename)
     n = len(traind['iob'])
     split_size = int(n * 0.8)
     train = zip(traind['iob'][:split_size], traind['polarity'][:split_size])
@@ -222,8 +241,8 @@ def get_liu_lexicon(filename):
 
 
 if __name__ == '__main__':
-    traind = XMLParser.create_exs(filename)
-    n = len(traind['iob'])
-    split_size = int(n * 0.8)
-    labels = traind['polarity'][:split_size]
+    pass
+    #f = file('obj.save', 'wb')
+    #cPickle.dump(my_obj, f, protocol=cPickle.HIGHEST_PROTOCOL)
+    #f.close()
     #train_and_test('restaurants-trial.xml', 'positive-words.txt', 'negative-words.txt')

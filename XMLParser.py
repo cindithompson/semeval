@@ -44,14 +44,17 @@ def create_exs(filename):
         a_terms = sentence.find('aspectTerms')
         sentiments = []
         terms = []
+        froms, tos = [], []
         if a_terms is not None:
             for at in a_terms:
                 terms.append(at.attrib['term'])
                 sentiments.append(at.attrib['polarity'])
+                froms.append(int(at.attrib['from']))
+                tos.append(int(at.attrib['to']))
         aspects.append(terms)
         #print "creating for sent:", words
         #print "terms:", terms
-        seq = create_POS_ex(words, terms)
+        seq = create_POS_ex(words, froms, tos)
         examples.append(seq)
         polarities.append(sentiments)
 
@@ -59,8 +62,58 @@ def create_exs(filename):
     return {'orig': text, 'iob': examples, 'polarity': polarities, 'aspects': aspects}
 
 
-def create_POS_ex(sentence, words):
-    """ Create the POS-tagged IOB part of the example.
+def create_iob(sent, froms, tos):
+    """ Support method for creating an example. Just get the IOB tags from
+    character indexes in the original sentence.
+    """
+    words = sent.split()
+    cidx = 0
+    to = 0
+    iob = []
+    in_tag = False
+    for w in words:
+        if in_tag:
+            if cidx < to:
+                iob.append((w, 'I-Aspect'))
+            else:
+                iob.append((w, 'O'))
+                in_tag = False
+        elif cidx in froms:
+            in_tag = True
+            iob.append((w, 'B-Aspect'))
+            to = tos[froms.index(cidx)]
+        else:
+            iob.append((w, 'O'))
+        cidx += len(w) + 1
+    return iob
+
+
+def create_POS_ex(sent, froms, tos):
+    """Create the POS-tagged IOB part of the example.
+    Input: sent: original text of sentence;
+    froms: start indexes of aspect terms
+    tos: end indexes of aspect terms in sent
+    """
+    iob = create_iob(sent, froms, tos)
+    pos_tags = nltk.pos_tag(nltk.word_tokenize(sent))
+    #print iob
+    #print pos_tags
+    result = []
+    i_idx = 0
+    for w, ptag in pos_tags:
+        #print w, i_idx, iob[i_idx]
+        #there can be punctuation at the end of a sentence so i_idx can get to large
+        if i_idx < len(iob) and iob[i_idx][0].startswith(w):
+            result.append((w, ptag, iob[i_idx][1]))
+            i_idx += 1
+        else:
+            result.append((w, ptag, 'O'))
+    return result
+
+
+def create_POS_ex_old(sentence, words):
+    """ OLDER VERSION: assumes each aspect term occurs once.
+    Create the POS-tagged IOB part of the example.
     Input: sentence: original text of sentence;
     words: aspect phrases in the sentence
     """
@@ -82,6 +135,7 @@ def create_POS_ex(sentence, words):
         else:
             iob.append((w, ptag, 'O'))
     return iob
+
 
 def split_words(words):
     """Given a phrase, return a tuple: the first word in the phrase (as a list),
@@ -123,54 +177,11 @@ def create_exs_older(filename):
     return {'orig': text, 'iob': examples, 'polarity': polarities}
 
 
-#older version without POS tags
-def create_one_ex(sent, froms, tos):
-    """ given a sentence and the positions of the aspect terms in the sentence,
-    return a list of word/tag pairs, where the tags are IOB indicating in, begin, or out of a aspect term
-    Also strips punctuation
-    """
-    words = sent.split()
-    cidx = 0
-    iob = []
-    it = iter(words)
-    for w in it:
-        if cidx in froms:
-            iob.append(create_seq_ele(w, 'B-Aspect'))
-            a_idx = froms.index(cidx)
-            to = tos[a_idx]
-            cidx += len(w) + 1
-            while cidx < to:
-                wd = it.next()
-                iob.append(create_seq_ele(wd, 'I-Aspect'))
-                cidx += len(wd) + 1
-        else:
-            iob.append(create_seq_ele(w, 'O'))
-            cidx += len(w) + 1
-    #print "final IOB", iob
-    return iob
 
 
-#doesn't work with punctuation, putting on back burner
-def create_one_withPOS(sent, froms, tos):
-    pos_tags = nltk.pos_tag(nltk.word_tokenize(sent))
-    cidx = 0
-    iob = []
-    it = iter(pos_tags)
-    for w,ptag in it:
-        if cidx in froms:
-            iob.append((w, ptag, 'B-Aspect'))
-            a_idx = froms.index(cidx)
-            to = tos[a_idx]
-            cidx += len(w) + 1
-            while cidx < to:
-                wd,ptag = it.next()
-                iob.append((wd, ptag, 'I-Aspect'))
-                cidx += len(wd) + 1
-        else:
-            iob.append((w, ptag, 'O'))
-            cidx += len(w) + 1
-    #print "final IOB", iob
-    return iob
+
+def dbg(inpt):
+    print inpt
 
 
 def create_seq_ele(word, tag):
