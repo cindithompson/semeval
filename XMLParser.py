@@ -35,11 +35,11 @@ def create_exs(filename):
     """
     examples = []
     polarities = []
+    aspects = []
     text = []
     tree = ET.parse(filename)
     root = tree.getroot()
     for sentence in root.findall('sentence'):
-        #words = sentence[0].text #assumes text comes first
         words = sentence.find('text').text.strip()
         a_terms = sentence.find('aspectTerms')
         sentiments = []
@@ -48,36 +48,45 @@ def create_exs(filename):
             for at in a_terms:
                 terms.append(at.attrib['term'])
                 sentiments.append(at.attrib['polarity'])
+        aspects.append(terms)
+        #print "creating for sent:", words
+        #print "terms:", terms
         seq = create_POS_ex(words, terms)
         examples.append(seq)
         polarities.append(sentiments)
+
         text.append(words)
-    return {'orig': text, 'iob': examples, 'polarity': polarities}
+    return {'orig': text, 'iob': examples, 'polarity': polarities, 'aspects': aspects}
 
 
 def create_POS_ex(sentence, words):
-    #split phrases in words into pieces
+    """ Create the POS-tagged IOB part of the example.
+    Input: sentence: original text of sentence;
+    words: aspect phrases in the sentence
+    """
+    #split aspect phrases in words into pieces
     starts, continuations = split_words(words)
     pos_tags = nltk.pos_tag(nltk.word_tokenize(sentence))
     iob = []
-    it = iter(pos_tags)
-    for w,ptag in it:
-        if w in starts:
+    in_tag = False
+    for w, ptag in pos_tags:
+        if in_tag:
+            if w in continuations:
+                iob.append((w, ptag, 'I-Aspect'))
+            else:
+                in_tag = False
+                iob.append((w, ptag, 'O'))
+        elif w in starts:
             iob.append((w, ptag, 'B-Aspect'))
-            in_term = True
-            while in_term:
-                wd,ptag = it.next()
-                if wd in continuations:
-                    iob.append((wd, ptag, 'I-Aspect'))
-                else:
-                    in_term = False
-                    iob.append((wd, ptag, 'O'))
+            in_tag = True
         else:
             iob.append((w, ptag, 'O'))
     return iob
 
-
 def split_words(words):
+    """Given a phrase, return a tuple: the first word in the phrase (as a list),
+    and a list of the "tail" of the phrase, if any
+    """
     first_wds = []
     rest_wds = []
     for word in words:
@@ -85,7 +94,6 @@ def split_words(words):
         first_wds.append(tokens[0])
         rest_wds.extend(tokens[1:])
     return first_wds, rest_wds
-
 
 
 def create_exs_older(filename):

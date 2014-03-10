@@ -113,8 +113,9 @@ def chunk_features(sentence, i, sent_dict, history):
         nextw, nextpos = sentence[i+1]
         next_sentiment = sentiment_lookup(sent_dict, nextw, nextpos)
 
-    return {'word': word, 'pos': pos, 'sentiment': sentiment, 'prevpos': prevpos, 'nextpos': nextpos, 'prevtag': prevtag,
-            'prev_sentiment': prev_sentiment, 'next_sentiment': next_sentiment}
+    return {'word': word, 'pos': pos, 'sentiment': sentiment,
+            'prevpos': prevpos, 'prevtag': prevtag, 'prev_sentiment': prev_sentiment,
+            'nextpos': nextpos, 'next_sentiment': next_sentiment}
 
 
 def sentiment_lookup(dict, word, pos):
