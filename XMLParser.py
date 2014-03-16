@@ -3,6 +3,8 @@ import xml.etree.ElementTree as ET
 import pickle
 import string
 import nltk
+import re
+import codecs
 
 
 def pickle_laptop_data(filename):
@@ -37,9 +39,14 @@ def create_exs(filename):
     polarities = []
     aspects = []
     text = []
+    #needed for final dump of answers to XML
+    ids = []
+    #also needed is original positions, too hard to get back later
+    indices = []
     tree = ET.parse(filename)
     root = tree.getroot()
     for sentence in root.findall('sentence'):
+        ids.append(sentence.attrib['id'])
         words = sentence.find('text').text.strip()
         a_terms = sentence.find('aspectTerms')
         sentiments = []
@@ -56,10 +63,12 @@ def create_exs(filename):
         #print "terms:", terms
         seq = create_POS_ex(words, froms, tos)
         examples.append(seq)
+        idxs = find_start_ends(words, [t[0] for t in seq])
+        indices.append(idxs)
         polarities.append(sentiments)
-
         text.append(words)
-    return {'orig': text, 'iob': examples, 'polarity': polarities, 'aspects': aspects}
+    return {'orig': text, 'iob': examples, 'polarity': polarities, 'aspects': aspects,
+            'id': ids, 'idx': indices}
 
 
 def create_iob(sent, froms, tos):
@@ -88,6 +97,33 @@ def create_iob(sent, froms, tos):
     return iob
 
 
+def find_start_ends(sent, terms):
+    """ Find the position in sent of each of the terms (which
+    might be words but might be a substring of the word because of punctuation splits
+    that tokenizing did).
+    Return: a list of (start, end) tuples, one per term. NOTE: the end tuple
+    uses the traditional python convention of pointing one char past the term.
+    """
+    idxs = []
+    t_idx, s_idx = 0,0
+    while s_idx < len(sent):
+        curr_term = terms[t_idx]
+        #print s_idx, curr_term
+        #print sent[s_idx:]
+        #special case, quotes get changed
+        if (curr_term == "''" or curr_term == '``') and sent[s_idx].startswith('"'):
+            idxs.append((s_idx,s_idx+1))
+            t_idx += 1
+            s_idx += 1
+        elif sent[s_idx:].startswith(curr_term):
+            idxs.append((s_idx,s_idx+len(curr_term)))
+            t_idx += 1
+            s_idx += len(curr_term)
+        else:
+            s_idx += 1
+    return idxs
+
+
 def create_POS_ex(sent, froms, tos):
     """Create the POS-tagged IOB part of the example.
     Input: sent: original text of sentence;
@@ -108,7 +144,75 @@ def create_POS_ex(sent, froms, tos):
             i_idx += 1
         else:
             result.append((w, ptag, 'O'))
+    # new code as of mid-March, getting the original character positions of the IOBs
+    #print result
+    #print find_start_ends(sent, [t[0] for t in result])
     return result
+
+
+def create_xml(orig, iobs, ids, indices, outfile='dump-answers.txt'):
+    """Create the XML file for answer submission.
+    Inputs:
+    orig: text of original sentences
+    iobs: the tagged aspect terms of each sentence
+    ids: sentence ids
+    outfile: name of file to write the XML to
+    Returns: success indicator
+    """
+    #f = open(outfile, 'w')
+    f = codecs.open(outfile, mode='w', encoding='utf-8')
+    f.write('<sentences>\n')
+    for i in range(len(orig)):
+        f.write('<sentence id=\"'+ids[i]+'\">\n')
+        f.write('<text>\n'+orig[i]+'\n</text>\n')
+        if len(iobs[i]) > 0:
+            f.write('<aspectTerms>\n')
+            process_aspects(iobs[i], indices[i], f)
+            f.write('</aspectTerms>\n')
+        f.write('</sentence>\n')
+    f.write('</sentences>\n')
+    f.close()
+
+
+def process_aspects(iob, idxs, f):
+    in_term = False
+    terms = []
+    start, end = 0, 0
+    #print "idxs:" ,idxs
+    for i in range(len(iob)):
+        if in_term:
+            if iob[i][2].startswith('I'):
+                #previous end less than current start
+                if end < idxs[i][0]:
+                    terms.append(' ' * (idxs[i][0]-end))
+                end = idxs[i][1]
+                terms.append(iob[i][0])
+            elif iob[i][2].startswith('B'):
+                write_aterm(terms, start, end, f)
+                start = idxs[i][0]
+                end = idxs[i][1]
+                terms = [iob[i][0]]
+            else: #'O'
+                in_term = False
+                write_aterm(terms, start, end, f)
+        elif iob[i][2].startswith('B'):
+                in_term = True
+                start = idxs[i][0]
+                end = idxs[i][1]
+                terms = [iob[i][0]]
+    if in_term:
+        write_aterm(terms, start, end, f)
+
+
+def write_aterm(words, start, end, f):
+    f.write('<aspectTerm term="')
+    for w in words:
+        f.write(w)
+    f.write('" polarity="neutral" from="')
+    f.write(str(start))
+    f.write('" to="')
+    f.write(str(end))
+    f.write('"/>\n')
 
 
 def create_POS_ex_old(sentence, words):
@@ -175,9 +279,6 @@ def create_exs_older(filename):
         polarities.append(sentiments)
         text.append(words)
     return {'orig': text, 'iob': examples, 'polarity': polarities}
-
-
-
 
 
 def dbg(inpt):
@@ -265,4 +366,5 @@ if __name__ == '__main__':
     #show_term()
     #term2categories()
 
-    print create_exs('restaurants-trial.xml')
+    examples = create_exs('restaurants-trial.xml')
+    create_xml(examples['orig'],examples['iob'],examples['id'],examples['idx'])

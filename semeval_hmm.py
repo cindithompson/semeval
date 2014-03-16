@@ -1,58 +1,49 @@
-import pickle
+import cPickle
 import string
 import XMLParser
 import nltk
 import scipy
 from nltk.corpus import conll2000
 from nltk.chunk.util import conlltags2tree
+from nltk.tag import hmm
 import re
-
-#We are not using this, it's just an example to play around with chunking from the NLTK book
-class UnigramChunker(nltk.ChunkParserI):
-    def __init__(self, train_sents): # [_code-unigram-chunker-constructor]
-        train_data = [[(t,c) for w,t,c in nltk.chunk.tree2conlltags(sent)]
-                      for sent in train_sents]
-        self.tagger = nltk.UnigramTagger(train_data) # [_code-unigram-chunker-buildit]
-
-    def parse(self, sentence): # [_code-unigram-chunker-parse]
-        pos_tags = [pos for (word,pos) in sentence]
-        tagged_pos_tags = self.tagger.tag(pos_tags)
-        chunktags = [chunktag for (pos, chunktag) in tagged_pos_tags]
-        conlltags = [(word, pos, chunktag) for ((word,pos),chunktag)
-                     in zip(sentence, chunktags)]
-        #print "input to conlltags", conlltags
-        return conlltags2tree(conlltags)
 
 
 class ConsecutiveChunkTagger(nltk.TaggerI):
     """
-    Trains using maximum entropy; should also try NB
+    Trains using HMM
     """
 
     def __init__(self, train_sents, sent_dict):
         train_set = []
+        tag_set = []
+        symbols = []
         for tagged_sent in train_sents:
-            #print "tagged", tagged_sent
-            untagged_sent = nltk.tag.untag(tagged_sent)
-            #print "untagged", untagged_sent
-            history = []
-            for i, (word, tag) in enumerate(tagged_sent):
-                featureset = chunk_features(untagged_sent, i, sent_dict, history)
-                train_set.append((featureset, tag))
-                history.append(tag)
-        self.sent_dict = sent_dict
-        #megam doesn't work in below - seems hard to get working; cg also doesn't work
-        self.classifier = nltk.MaxentClassifier.train(
-            train_set, algorithm='iis',
-            trace=0)
+            example = []
+            for i, (wd_pos, tag) in enumerate(tagged_sent):
+                tag_set.append(tag)
+                pos = wd_pos[1]
+                symbols.append(pos)
+                #symbols.append(wd_pos)
+                example.append((pos, tag))
+            train_set.append(example)
+        #print train_set
+        trainer = hmm.HiddenMarkovModelTrainer(list(set(tag_set)), list(set(symbols)))
+        #self.hmm = trainer.train_supervised(train_sents)
+        self.hmm = trainer.train_supervised(train_set)
 
     def tag(self, sentence):
-        history = []
-        for i, word in enumerate(sentence):
-            featureset = chunk_features(sentence, i, self.sent_dict, history)
-            tag = self.classifier.classify(featureset)
-            history.append(tag)
-        return zip(sentence, history)
+        #sentence is a list of (w,pos) tuples - elim the wds
+        example = []
+        for w,pos in sentence:
+            example.append(pos)
+        #return self.hmm.tag(sentence)
+        iob_tags = self.hmm.tag(example)
+        result = []
+        for i in range(len(sentence)):
+            result.append((sentence[i], iob_tags[i][1]))
+        #print "tag res:",result
+        return result
 
 
 class ConsecutiveChunker(nltk.ChunkParserI):
@@ -75,9 +66,8 @@ class ConsecutiveChunker(nltk.ChunkParserI):
          The leaves of the tree have tags for IOB labels
         """
         tagged_sents = self.tagger.tag(sentence)
-        #print "parse result:", tagged_sents
+        #print "in parse:",tagged_sents
         conlltags = [(w, t, c) for ((w, t), c) in tagged_sents]
-        #print "conlltags:", conlltags
         return conlltags2tree(conlltags)
 
     def evaluate(self, gold):
@@ -85,9 +75,9 @@ class ConsecutiveChunker(nltk.ChunkParserI):
         """
         chunkscore = nltk.ChunkScore()
         for tagged_sent in gold:
-            print "true:", tagged_sent
-            print "guess:", self.parse([(w,t) for (w,t,_c) in tagged_sent])
+            print "true:", conlltags2tree(tagged_sent)
             #score thinks things should be in trees
+            #print "guess:", self.parse([(w,t) for (w,t,_c) in tagged_sent])
             chunkscore.score(conlltags2tree(tagged_sent), self.parse([(w,t) for (w,t,_c) in tagged_sent]))
         return chunkscore
 
@@ -131,11 +121,16 @@ def sentiment_lookup(dict, word, pos):
     return 'neutral'
 
 
-def train_and_test(filename, posit_lex_file='positive-words.txt', nega_lex_file='negative-words.txt'):
+def train_and_test(filename, posit_lex_file='positive-words.txt', nega_lex_file='negative-words.txt', pickled=False):
     """Creates an 80/20 split of the examples in filename,
     trains the chunker on 80%, and evaluates the learned chunker on 20%.
     """
-    traind = XMLParser.create_exs(filename)
+    if pickled:
+        f = open(filename, 'rb')
+        traind = cPickle.load(f)
+        f.close()
+    else:
+        traind = XMLParser.create_exs(filename)
     n = len(traind['iob'])
     split_size = int(n * 0.8)
     train = traind['iob'][:split_size]
