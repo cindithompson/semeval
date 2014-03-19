@@ -5,10 +5,14 @@ import nltk
 import scipy
 from nltk.corpus import conll2000
 from nltk.chunk.util import conlltags2tree
+from nltk.stem.lancaster import LancasterStemmer
 import re
 import cPickle
 from sklearn import cross_validation
 
+#globals for certain features
+use_unk = True
+stemming = False
 
 #We are not using this, it's just an example to play around with chunking from the NLTK book
 class UnigramChunker(nltk.ChunkParserI):
@@ -34,16 +38,19 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
 
     def __init__(self, train_sents, sent_dict):
         train_set = []
+        self.vocab = vocabulary(train_sents)
+        self.stemmer = LancasterStemmer()
         for tagged_sent in train_sents:
             #print "tagged", tagged_sent
             untagged_sent = nltk.tag.untag(tagged_sent)
             #print "untagged", untagged_sent
             history = []
             for i, (word, tag) in enumerate(tagged_sent):
-                featureset = chunk_features(untagged_sent, i, sent_dict, history)
+                featureset = chunk_features(untagged_sent, i, sent_dict, history, self.vocab, self.stemmer)
                 train_set.append((featureset, tag))
                 history.append(tag)
         self.sent_dict = sent_dict
+
         #megam doesn't work in below - seems hard to get working; cg also doesn't work
         self.classifier = nltk.MaxentClassifier.train(
             train_set, algorithm='iis',
@@ -52,7 +59,7 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
     def tag(self, sentence):
         history = []
         for i, word in enumerate(sentence):
-            featureset = chunk_features(sentence, i, self.sent_dict, history)
+            featureset = chunk_features(sentence, i, self.sent_dict, history, self.vocab, self.stemmer)
             tag = self.classifier.classify(featureset)
             history.append(tag)
         return zip(sentence, history)
@@ -100,32 +107,77 @@ class ConsecutiveChunker(nltk.ChunkParserI):
         return results
 
 
-def chunk_features(sentence, i, sent_dict, history):
+def vocabulary(train_sentences):
+    """Experiments with dealing with unknown words.
+    """
+    #unique vocabulary
+    vocab = set()
+    #all words for counting most frequent
+    wd_dist = []
+    for tagged_sent in train_sentences:
+        untagged_sent = nltk.tag.untag(tagged_sent)
+        for (w, _t) in untagged_sent:
+
+            vocab.add(w.lower())
+            wd_dist.append(w.lower())
+    print "# of vocab words:", len(vocab)
+    distro = nltk.FreqDist(wd_dist)
+    topn = int(len(vocab) * 0.5)
+    return list(distro)[:topn]
+
+
+#todo - vocab
+def chunk_features(sentence, i, sent_dict, history, vocab, st):
     """ Get features for sentence at position i with history being tags seen so far.
+    vocab is the top N% vocabulary words, and
+    st is the stemmer.
     Returns: dictionary of features.
     """
     word, pos = sentence[i]
     sentiment = sentiment_lookup(sent_dict, word, pos)
+    if use_unk and not word in vocab:
+        word = "<UNK>"
+    elif stemming:
+        word = st.stem(word)
+    objectivity = get_objectivity(sentiment)
     if i == 0:
         prevw, prevpos = "<START>", "<START>"
         prevtag = "<START>"
         prev_sentiment = "<START>"
-        #prev_negtive = "<START>"
+        prev_obj = "<START>"
     else:
         prevw, prevpos = sentence[i-1]
         prevtag = history[i-1]
         prev_sentiment = sentiment_lookup(sent_dict, prevw, prevpos)
+        if use_unk and not prevw in vocab:
+            prevw = "<UNK>"
+        elif stemming:
+            prevw = st.stem(prevw)
+        prev_obj = get_objectivity(prev_sentiment)
+
     if i == len(sentence)-1:
         nextw, nextpos = "<END>", "<END>"
         next_sentiment = "<END>"
+        next_obj = "<END>"
     else:
         nextw, nextpos = sentence[i+1]
         next_sentiment = sentiment_lookup(sent_dict, nextw, nextpos)
+        if use_unk and not nextw in vocab:
+            nextw = "<UNK>"
+        elif stemming:
+            nextw = st.stem(nextw)
+        next_obj = get_objectivity(next_sentiment)
 
-    return {'word': word, 'pos': pos, 'sentiment': sentiment,
-            'prevpos': prevpos, 'prevtag': prevtag, 'prev_sentiment': prev_sentiment,
-            'nextpos': nextpos, 'next_sentiment': next_sentiment}
+    return {'word': word, 'pos': pos, 'sentiment': sentiment, 'obj': objectivity,
+            'prevw': prevw, 'prevpos': prevpos, 'prevtag': prevtag, 'prev_sentiment': prev_sentiment, 'prev_obj': prev_obj,
+            'nextw': nextw, 'nextpos': nextpos, 'next_sentiment': next_sentiment, 'next_obj': next_obj}
 
+
+def get_objectivity(sentiment):
+    result = 'neutral'
+    if sentiment == 'positive' or sentiment == 'negative':
+        result = 'obj'
+    return result
 
 def sentiment_lookup(dict, word, pos):
     """ Return a sentiment indicator for the given word with the given POS tag, according to the dictionary.
@@ -173,9 +225,11 @@ def train_and_trial(trn_file, test_file, posit_lex_file='positive-words.txt', ne
     negi_words = get_liu_lexicon(nega_lex_file)
     chunker = ConsecutiveChunker(traind['iob'], {'pos': posi_words, 'neg': negi_words})
     print "done training"
+    '''
     f = open('learned.pkl','wb')
     cPickle.dump(chunker,f)
     f.close()
+    '''
     guessed_iobs = chunker.evaluate(testd['iob'])
     XMLParser.create_xml(testd['orig'],guessed_iobs,testd['id'],testd['idx'],'trial_answers.xml')
     compute_pr(testd['iob'], guessed_iobs)
@@ -194,6 +248,7 @@ def K_fold_train_and_test(filename, posit_lex_file='positive-words.txt', nega_le
     posi_words = get_liu_lexicon(posit_lex_file)
     negi_words = get_liu_lexicon(nega_lex_file)
     kf = cross_validation.KFold(n, n_folds=k, indices=True)
+    tot_p, tot_r, tot_f1 = 0, 0, 0
     for train, test in kf:
         print "next fold, split size: %d/%d" %(len(train), len(test))
         #print train
@@ -207,7 +262,11 @@ def K_fold_train_and_test(filename, posit_lex_file='positive-words.txt', nega_le
         guesses = chunker.evaluate(test_set)
         #print test_set
         #print guesses
-        compute_pr(test_set, guesses)
+        r, p, f = compute_pr(test_set, guesses)
+        tot_p += p
+        tot_r += r
+        tot_f1 += f
+    print "ave Prec: %.2f, Rec: %.2f, F1: %.2f" %(tot_p/float(k), tot_r/float(k), tot_f1/float(k))
 
 
 def compute_pr(c_iobs, g_iobs):
@@ -234,6 +293,8 @@ def compute_pr(c_iobs, g_iobs):
                     tp += 1
                 else:
                     fp += 1
+    print "num terms:", n
+    print "num guesses:", tp+fp
     recall = float(tp)/n
     if (tp+fp)>0:
         precision = float(tp)/(tp + fp)
@@ -243,7 +304,8 @@ def compute_pr(c_iobs, g_iobs):
         f1 = (2 * precision * recall)/(precision + recall)
     else:
         f1 = 0
-    print "Recall %f0.2, Precision: %f0.2, F1 %f0.2" %(recall, precision, f1)
+    print "Recall %.2f, Precision: %.2f, F1 %.2f" %(recall, precision, f1)
+    return recall, precision, f1
 
 
 def get_liu_lexicon(filename):

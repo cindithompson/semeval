@@ -47,7 +47,9 @@ def create_exs(filename):
     root = tree.getroot()
     for sentence in root.findall('sentence'):
         ids.append(sentence.attrib['id'])
-        words = sentence.find('text').text.strip()
+        words = sentence.find('text').text
+        #get rid of utf - no, do later
+        ##words = words.encode('utf-8')
         a_terms = sentence.find('aspectTerms')
         sentiments = []
         terms = []
@@ -61,14 +63,44 @@ def create_exs(filename):
         aspects.append(terms)
         #print "creating for sent:", words
         #print "terms:", terms
+        seq, idxs = new_create_POS_ex(words, froms, tos)
+        #print "seq:", seq
+        #print "idx:", idxs
+        ''' OLDER
         seq = create_POS_ex(words, froms, tos)
-        examples.append(seq)
         idxs = find_start_ends(words, [t[0] for t in seq])
+        '''
+        examples.append(seq)
         indices.append(idxs)
         polarities.append(sentiments)
         text.append(words)
     return {'orig': text, 'iob': examples, 'polarity': polarities, 'aspects': aspects,
             'id': ids, 'idx': indices}
+
+
+def new_create_POS_ex(sent, froms, tos):
+    iob = []
+    pos_tags = nltk.pos_tag(nltk.word_tokenize(sent.strip().encode('utf-8')))
+    tokens = [w for (w,t) in pos_tags]
+    idxs = find_start_ends(sent, tokens)
+    #print pos_tags
+    #print idxs
+    curr_asp_idx = -1
+    in_tag = False
+    for i in range(len(pos_tags)):
+        #print "processing: %s, in_tag: %s, at asp: %d" %(pos_tags[i], in_tag, curr_asp_idx)
+        if in_tag:
+            iob.append((pos_tags[i][0],pos_tags[i][1], 'I-Aspect'))
+            if tos[curr_asp_idx] == idxs[i][1]:
+                in_tag = False
+        elif idxs[i][0] in froms:
+            curr_asp_idx = froms.index(idxs[i][0])
+            iob.append((pos_tags[i][0],pos_tags[i][1], 'B-Aspect'))
+            if tos[curr_asp_idx] != idxs[i][1]:
+                in_tag = True
+        else:
+            iob.append((pos_tags[i][0],pos_tags[i][1], 'O'))
+    return iob, idxs
 
 
 def create_iob(sent, froms, tos):
@@ -110,6 +142,7 @@ def find_start_ends(sent, terms):
         curr_term = terms[t_idx]
         #print s_idx, curr_term
         #print sent[s_idx:]
+        #print "S:%sS" %sent[s_idx]
         #special case, quotes get changed
         if (curr_term == "''" or curr_term == '``') and sent[s_idx].startswith('"'):
             idxs.append((s_idx,s_idx+1))
@@ -131,9 +164,10 @@ def create_POS_ex(sent, froms, tos):
     tos: end indexes of aspect terms in sent
     """
     iob = create_iob(sent, froms, tos)
+    print "created iob:", iob
     pos_tags = nltk.pos_tag(nltk.word_tokenize(sent))
-    #print iob
-    #print pos_tags
+    print iob
+    print pos_tags
     result = []
     i_idx = 0
     for w, ptag in pos_tags:
@@ -145,8 +179,6 @@ def create_POS_ex(sent, froms, tos):
         else:
             result.append((w, ptag, 'O'))
     # new code as of mid-March, getting the original character positions of the IOBs
-    #print result
-    #print find_start_ends(sent, [t[0] for t in result])
     return result
 
 
@@ -164,7 +196,7 @@ def create_xml(orig, iobs, ids, indices, outfile='dump-answers.txt'):
     f.write('<sentences>\n')
     for i in range(len(orig)):
         f.write('<sentence id=\"'+ids[i]+'\">\n')
-        f.write('<text>\n'+orig[i]+'\n</text>\n')
+        f.write('<text>'+orig[i]+'\n</text>\n')
         if len(iobs[i]) > 0:
             f.write('<aspectTerms>\n')
             process_aspects(iobs[i], indices[i], f)

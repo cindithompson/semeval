@@ -7,6 +7,8 @@ from nltk.corpus import conll2000
 from nltk.chunk.util import conlltags2tree
 from nltk.tag import hmm
 import re
+import semevalTask4
+from sklearn import cross_validation
 
 
 class ConsecutiveChunkTagger(nltk.TaggerI):
@@ -26,6 +28,8 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
                 symbols.append(pos)
                 #symbols.append(wd_pos)
                 example.append((pos, tag))
+                #print example, pos, tag
+            #print example
             train_set.append(example)
         #print train_set
         trainer = hmm.HiddenMarkovModelTrainer(list(set(tag_set)), list(set(symbols)))
@@ -37,6 +41,7 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
         example = []
         for w,pos in sentence:
             example.append(pos)
+        print "parsing:", example
         #return self.hmm.tag(sentence)
         iob_tags = self.hmm.tag(example)
         result = []
@@ -67,19 +72,17 @@ class ConsecutiveChunker(nltk.ChunkParserI):
         """
         tagged_sents = self.tagger.tag(sentence)
         #print "in parse:",tagged_sents
-        conlltags = [(w, t, c) for ((w, t), c) in tagged_sents]
-        return conlltags2tree(conlltags)
+        return [(w, t, c) for ((w, t), c) in tagged_sents]
 
     def evaluate(self, gold):
-        """ nltk machinery computes Acc, P,R, and F-measure for trees.
+        """ Doesn't actually evaluate in terms of scoring, but returns the
+        sequences
         """
-        chunkscore = nltk.ChunkScore()
+        results = []
         for tagged_sent in gold:
-            print "true:", conlltags2tree(tagged_sent)
-            #score thinks things should be in trees
-            #print "guess:", self.parse([(w,t) for (w,t,_c) in tagged_sent])
-            chunkscore.score(conlltags2tree(tagged_sent), self.parse([(w,t) for (w,t,_c) in tagged_sent]))
-        return chunkscore
+            guess = self.parse([(w,t) for (w,t,_c) in tagged_sent])
+            results.append(guess)
+        return results
 
 
 def chunk_features(sentence, i, sent_dict, history):
@@ -139,6 +142,41 @@ def train_and_test(filename, posit_lex_file='positive-words.txt', nega_lex_file=
     negi_words = get_liu_lexicon(nega_lex_file)
     chunker = ConsecutiveChunker(train, {'pos': posi_words, 'neg': negi_words})
     print chunker.evaluate(test)
+
+
+def K_fold_train_and_test(filename, posit_lex_file='positive-words.txt', nega_lex_file='negative-words.txt', k=2, pickled=False):
+    """Does K-fold cross-validation on the given filename
+    """
+    if pickled:
+        f = open(filename, 'rb')
+        traind = cPickle.load(f)
+        f.close()
+    else:
+        traind = XMLParser.create_exs(filename)
+    n = len(traind['iob'])
+    posi_words = get_liu_lexicon(posit_lex_file)
+    negi_words = get_liu_lexicon(nega_lex_file)
+    kf = cross_validation.KFold(n, n_folds=k, indices=True)
+    tot_p, tot_r, tot_f1 = 0, 0, 0
+    for train, test in kf:
+        print "next fold, split size: %d/%d" %(len(train), len(test))
+        #print train
+        train_set = []
+        test_set = []
+        for i in train:
+            train_set.append(traind['iob'][i])
+        for i in test:
+            test_set.append(traind['iob'][i])
+        chunker = ConsecutiveChunker(train_set, {'pos': posi_words, 'neg': negi_words})
+        guesses = chunker.evaluate(test_set)
+        print test_set
+        print guesses
+        r, p, f = semevalTask4.compute_pr(test_set, guesses)
+        tot_p += p
+        tot_r += r
+        tot_f1 += f
+    print "ave Prec: %.2f, Rec: %.2f, F1: %.2f" %(tot_p/float(k), tot_r/float(k), tot_f1/float(k))
+
 
 
 def get_liu_lexicon(filename):
