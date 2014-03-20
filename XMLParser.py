@@ -61,8 +61,8 @@ def create_exs(filename):
                 froms.append(int(at.attrib['from']))
                 tos.append(int(at.attrib['to']))
         aspects.append(terms)
-        #print "creating for sent:", words
-        #print "terms:", terms
+        print "creating for sent:", words
+        print "terms:", terms
         seq, idxs = new_create_POS_ex(words, froms, tos)
         #print "seq:", seq
         #print "idx:", idxs
@@ -81,9 +81,10 @@ def create_exs(filename):
 def new_create_POS_ex(sent, froms, tos):
     iob = []
     pos_tags = nltk.pos_tag(nltk.word_tokenize(sent.strip().encode('utf-8')))
+    print pos_tags
     tokens = [w for (w,t) in pos_tags]
     idxs = find_start_ends(sent, tokens)
-    #print pos_tags
+
     #print idxs
     curr_asp_idx = -1
     in_tag = False
@@ -139,9 +140,9 @@ def find_start_ends(sent, terms):
     idxs = []
     t_idx, s_idx = 0,0
     while s_idx < len(sent):
-        curr_term = terms[t_idx]
+        curr_term = terms[t_idx].decode('utf-8')
+        #print "curr:%sS" %curr_term
         #print s_idx, curr_term
-        #print sent[s_idx:]
         #print "S:%sS" %sent[s_idx]
         #special case, quotes get changed
         if (curr_term == "''" or curr_term == '``') and sent[s_idx].startswith('"'):
@@ -150,6 +151,7 @@ def find_start_ends(sent, terms):
             s_idx += 1
         elif sent[s_idx:].startswith(curr_term):
             idxs.append((s_idx,s_idx+len(curr_term)))
+            #print "found"
             t_idx += 1
             s_idx += len(curr_term)
         else:
