@@ -6,6 +6,7 @@ import scipy
 from nltk.corpus import conll2000
 from nltk.chunk.util import conlltags2tree
 from nltk.stem.lancaster import LancasterStemmer
+from nltk.stem.porter import PorterStemmer
 import re
 import cPickle
 from sklearn import cross_validation
@@ -95,10 +96,32 @@ def get_objectivity(sentiment):
     return result
 
 
+def dep_features(sentence, i, history, parse):
+    """ Create the features related to dependency parsing
+    """
+    word, pos = sentence[i]
+
+    pass
+
+
 def sentiment_lookup(dict, word, pos):
     """ Return a sentiment indicator for the given word with the given POS tag, according to the dictionary.
     Return values: positive, negative, neutral.
+    Uses stemming if not found with original word
     """
+    result = senti_idx_aux(dict, word, pos)
+    if result == 'neutral':
+        stemmer = LancasterStemmer()
+        stemmed = stemmer.stem(word)
+        result = sentiment_lookup(senti_dict, stemmed, pos)
+    if result == 'neutral':
+        stemmer = PorterStemmer()
+        stemmed = stemmer.stem(word)
+        result = sentiment_lookup(senti_dict, stemmed, pos)
+    return result
+
+
+def senti_idx_aux(dict, word, pos):
     #deal with POS - find more specific lexicon entries first
     if pos.startswith('NN'):
         if (word, 'noun') in dict['pos'] or (word,'anypos') in dict['pos']:
@@ -246,7 +269,7 @@ def create_parses_from_dict(input, ofile='dep_parse.txt', pickled=True):
         f.close()
     else:
         traind = XMLParser.create_exs(input)
-    stanford_parse(traind['orig'], ofile)
+    return stanford_parse(traind['orig'], ofile)
 
 
 def stanford_parse(sentences, ofile='dep_parse.txt'):
@@ -319,7 +342,8 @@ def add_dep_parse_features(original, parse_file, pickled=True, dictionary=False)
     f.close()
     dep_trees = transform_dep_parse(lines)
     senti_dictionary = get_mpqa_lexicon()
-    new_iobs = integrate_dep_iob(traind['iob'], dep_trees, senti_dictionary)
+    new_dep_trees = integrate_dep_iob(traind['iob'], dep_trees, senti_dictionary)
+    return new_dep_trees
 
 
 def integrate_dep_iob(iobs, dep_ps, senti_dict):
@@ -329,16 +353,12 @@ def integrate_dep_iob(iobs, dep_ps, senti_dict):
     result = dep_ps
     for i in range(len(iobs)):
         iob = iobs[i]
-        #print iob
         parse = dep_ps[i]
-        #print parse
         for j in range(len(iob)):
             (w, pos, _iob_label) = iob[j]
             polarity = sentiment_lookup(senti_dict, w, pos)
-            #print polarity
             if polarity != 'neutral':
                 result[i] = update_dist(parse, w, j, polarity)
-                #print result[i]
     return result
 
 
