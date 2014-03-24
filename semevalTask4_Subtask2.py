@@ -4,6 +4,7 @@ import nltk
 from collections import defaultdict
 import re
 import cPickle
+import semeval_util
 
 
 class ConsecutiveChunkTagger(nltk.TaggerI):
@@ -22,10 +23,12 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
         print "%d training examples" % n
         for x in range(n):
             tagged_sent = train_sents[x][0]
+            #these are really sentiment tags for the aspect terms, not the IOB tags as in extraction task
             aspect_tags = train_sents[x][1]
-            #print "x:", tagged_sent, aspect_tags
+            print "x:", tagged_sent, aspect_tags
             n_aspect = 0
             sentiment = senti_tags[x]
+            print "sentim:",sentiment
             history = []
             # create a training example for each aspect term
             for i, (_word, _pos, tag) in enumerate(tagged_sent):
@@ -171,18 +174,6 @@ def chunk_features(sentence, i, sent_dict, history):
             'nextw': nextw, 'nextpos': nextpos, 'nextiob': next_tag, 'next_sentiment': next_sentiment}
 
 
-def sentiment_lookup(dict, word, pos):
-    """ Return a sentiment indicator for the given word with the given POS tag, according to the dictionary.
-    Ignoring pos tags for now.
-    Return values: positive, negative, neutral.
-    """
-    if word in dict['pos']:
-        return 'positive'
-    if word in dict['neg']:
-        return 'negative'
-    return 'neutral'
-
-
 negateWords = ["won't", "wouldn't", "shan't", "shouldn't", "can't", "cannot", "couldn't", "mustn't",
                "isn't" "aren't" "wasn't" "weren't" "hasn't" "haven't" "hadn't" "doesn't" "don't" "didn't",
                "not", "no", "never"]
@@ -225,24 +216,71 @@ def train_and_test(filename, posit_lex_file='positive-words.txt', nega_lex_file=
     split_size = int(n * 0.8)
     train = zip(traind['iob'][:split_size], traind['polarity'][:split_size])
     test = zip(traind['iob'][split_size:], traind['polarity'][split_size:])
-    posi_words = get_liu_lexicon(posit_lex_file)
-    negi_words = get_liu_lexicon(nega_lex_file)
+    posi_words = semeval_util.get_liu_lexicon(posit_lex_file)
+    negi_words = semeval_util.get_liu_lexicon(nega_lex_file)
     full_senti_label = [senti_classify(sentence, posi_words, negi_words) for sentence in traind['orig']]
 
     chunker = ConsecutiveChunkTagger(train, {'pos': posi_words, 'neg': negi_words}, full_senti_label)
     print chunker.evaluate(zip(test, full_senti_label[split_size:]))
 
 
-def get_liu_lexicon(filename):
-    """
-    Return the list of sentiment words from the Liu-formatted sentiment lexicons (just a header then a list)
-    """
-    return [item.strip() for item in open(filename, "r").readlines() if re.match("^[^;]+\w",item)]
-
-
 if __name__ == '__main__':
-    pass
     #f = file('obj.save', 'wb')
     #cPickle.dump(my_obj, f, protocol=cPickle.HIGHEST_PROTOCOL)
     #f.close()
     #train_and_test('restaurants-trial.xml', 'positive-words.txt', 'negative-words.txt')
+    f = open('../PycharmProjects/emnlp/Rest_train_v2.pkl', 'rb')
+    traind = cPickle.load(f)
+    f.close()
+
+    posi_words = semeval_util.get_liu_lexicon('positive-words.txt')
+    negi_words = semeval_util.get_liu_lexicon('negative-words.txt')
+    full_senti_label = [senti_classify(sentence, posi_words, negi_words) for sentence in traind['orig']]
+    #split_size = int(len(traind['orig']) * .25)
+    split_size = len(traind['orig'])
+    #subset = zip(traind['iob'][:split_size], traind['polarity'][:split_size])
+    tp, tneg, tneutr = 0., 0., 0.
+    fnn = 0.
+    missed_neut, fpn = 0., 0.
+    wrong_empties = 0.
+    for i in range(split_size):
+        labels = traind['polarity'][i]
+        if len(labels) > 0:
+            senti = 0
+            for l in labels:
+                if l=='positive':
+                    senti += 1
+                elif l == 'negative':
+                    senti -= 1
+            if senti > 0:
+                if full_senti_label[i] > 0:
+                    tp += 1
+                else:
+                    fnn += 1
+            elif senti == 0:
+                if full_senti_label[i] == 0:
+                    tneutr += 1
+                else:
+                    missed_neut += 1
+                    print traind['orig'][i]
+                    print traind['polarity'][i]
+                    print traind['aspects'][i]
+            else: # senti < 0
+                print
+                if full_senti_label[i] < 0:
+                    tneg += 1
+                else:
+                    fpn += 1
+        else:
+            if full_senti_label[i] != 0:
+                wrong_empties += 1
+                print "wrong empty, senti:", full_senti_label[i]
+                print traind['orig'][i]
+                print traind['polarity'][i]
+                print traind['aspects'][i]
+
+    print "TP: %f, TN: %f, TNeut: %f" %(tp/split_size, tneg/split_size, tneutr/split_size)
+    print "FP: %f, FN: %f, FNeut: %f" %(fnn/split_size, missed_neut/split_size, fpn/split_size)
+    print "wrong empties: ", wrong_empties/split_size
+
+

@@ -61,8 +61,8 @@ def create_exs(filename):
                 froms.append(int(at.attrib['from']))
                 tos.append(int(at.attrib['to']))
         aspects.append(terms)
-        print "creating for sent:", words
-        print "terms:", terms
+        #print "creating for sent:", words
+        #print "terms:", terms
         seq, idxs = new_create_POS_ex(words, froms, tos)
         #print "seq:", seq
         #print "idx:", idxs
@@ -73,15 +73,17 @@ def create_exs(filename):
         examples.append(seq)
         indices.append(idxs)
         polarities.append(sentiments)
-        text.append(words)
+        text.append(words.strip())
     return {'orig': text, 'iob': examples, 'polarity': polarities, 'aspects': aspects,
             'id': ids, 'idx': indices}
 
 
 def new_create_POS_ex(sent, froms, tos):
+    '''Create the IOB & POS tagged sequence
+    '''
     iob = []
     pos_tags = nltk.pos_tag(nltk.word_tokenize(sent.strip().encode('utf-8')))
-    print pos_tags
+    #print pos_tags
     tokens = [w for (w,t) in pos_tags]
     idxs = find_start_ends(sent, tokens)
 
@@ -139,7 +141,10 @@ def find_start_ends(sent, terms):
     """
     idxs = []
     t_idx, s_idx = 0,0
+    #Following new for trial xml files, late march
+    sent = sent.rstrip()
     while s_idx < len(sent):
+        #print "S:%sS" %sent[s_idx]
         curr_term = terms[t_idx].decode('utf-8')
         #print "curr:%sS" %curr_term
         #print s_idx, curr_term
