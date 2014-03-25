@@ -96,12 +96,52 @@ def get_objectivity(sentiment):
     return result
 
 
-def dep_features(sentence, i, history, parse):
-    """ Create the features related to dependency parsing
+def dep_features(sentence, i, parse):
+    """ Create the features related to dependency parsing.
+    Assumes dependency parsing has already been done and our DepTree representation is passed in
     """
-    word, pos = sentence[i]
-
-    pass
+    word, _pos = sentence[i]
+    target = "%s-%d" % (word, i+1)
+    if target in parse.elements:
+        dep_node = parse.elements[target]
+        dist_w = dep_node.closest_sentiment
+        sent_w = dep_node.polarity_closest
+    else:
+        print "IOB %s at posit %d not found in parse: %s" % (sentence[i], i+1, parse)
+        dist_w = sys.maxint
+        sent_w = 'neutral'
+    #prevw stuff
+    if i == 0:
+        dist_p = "<START>"
+        sent_p = "<START>"
+    else:
+        prevw, _prevpos = sentence[i-1]
+        target = "%s-%d" % (prevw, i)
+        if target in parse.elements:
+            dep_node = parse.elements[target]
+            dist_p = dep_node.closest_sentiment
+            sent_p = dep_node.polarity_closest
+        else:
+            print "IOB %s at posit %d not found in parse: %s" % (sentence[i-1], i, parse)
+            dist_p = sys.maxint
+            sent_p = 'neutral'
+    #next wd stuff
+    if i == len(sentence)-1:
+        dist_n = "<END>"
+        sent_n = "<END>"
+    else:
+        nextw, _nextpos = sentence[i+1]
+        target = "%s-%d" % (nextw, i+2)
+        if target in parse.elements:
+            dep_node = parse.elements[target]
+            dist_n = dep_node.closest_sentiment
+            sent_n = dep_node.polarity_closest
+        else:
+            print "IOB %s at posit %d not found in parse: %s" % (sentence[i+1], i+2, parse)
+            dist_n = sys.maxint
+            sent_n = 'neutral'
+    return {'dep_distw': dist_w, 'dep_sent': sent_w, 'dep_distp': dist_p, 'dep_sentp': sent_p,
+            'dep_distn': dist_n, 'dep_sentn': sent_n}
 
 
 def sentiment_lookup(dict, word, pos):
@@ -113,11 +153,11 @@ def sentiment_lookup(dict, word, pos):
     if result == 'neutral':
         stemmer = LancasterStemmer()
         stemmed = stemmer.stem(word)
-        result = sentiment_lookup(senti_dict, stemmed, pos)
+        result = senti_idx_aux(dict, stemmed, pos)
     if result == 'neutral':
         stemmer = PorterStemmer()
         stemmed = stemmer.stem(word)
-        result = sentiment_lookup(senti_dict, stemmed, pos)
+        result = senti_idx_aux(dict, stemmed, pos)
     return result
 
 
@@ -329,6 +369,12 @@ def get_dep(full_stanford_result):
 
 
 def add_dep_parse_features(original, parse_file, pickled=True, dictionary=False):
+    """Create the dependency tree dictionaries that we need for each sentence
+    in the input corpus.
+    Inputs:
+    original: pickled version of our dictionary, or the dictionary itself,
+    or the original XML file
+    """
     if pickled:
         f = open(original, 'rb')
         traind = cPickle.load(f)
@@ -492,9 +538,9 @@ class PriorityQueue:
 
 
 def transform_dep_parse(parses):
-    '''Transform a raw dependency parse (from Stanford parser) to a format
+    """Transform a raw dependency parse (from Stanford parser) to a format
     we can use, namely DepTree's
-    '''
+    """
     results = []
     for p in parses:
         this_tree = DepTree()
@@ -692,3 +738,18 @@ def create_features(token, tag):
     else:
         yield "token={}".format(token.lower())
         yield "token,tag={},{}".format(token, tag)
+
+#Main to create the dependency parse features for a corpus
+if __name__ == '__main__':
+    """
+    Here's how to do the parsing part:
+    create_parses_from_dict('train.pkl','train-parse.txt')
+    semeval_util.create_parses_from_dict('Rest_train_v2.pkl','rest_train-parse.txt')
+    """
+    #NOTE YET TESTED
+
+    new_dep_trees = add_dep_parse_features(original_dict, parse_filename)
+    iobs = original_dict['iob']
+    for (w, pos, tag) in iobs:
+        pass
+    pass

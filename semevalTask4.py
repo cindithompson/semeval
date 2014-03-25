@@ -214,4 +214,5 @@ def K_fold_train_and_test(filename, posit_lex_file='positive-words.txt', nega_le
 
 
 if __name__ == '__main__':
-    train_and_test('restaurants-trial.xml','positive-words.txt', 'negative-words.txt')
+    K_fold_train_and_test('../PycharmProjects/emnlp/Rest_train_v2.pkl',pickled=True)
+    #train_and_test('restaurants-trial.xml','positive-words.txt', 'negative-words.txt')
