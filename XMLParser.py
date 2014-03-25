@@ -404,6 +404,5 @@ if __name__ == '__main__':
     #pickle_restaurants_dataset('Restaurants_Train.xml')
     #show_term()
     #term2categories()
-
     examples = create_exs('restaurants-trial.xml')
     create_xml(examples['orig'],examples['iob'],examples['id'],examples['idx'])
