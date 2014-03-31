@@ -17,11 +17,17 @@ import itertools
 import copy
 import heapq
 import codecs
+import semevalTask4
 
 '''
 This file contains utility methods used for multiple subtasks of semeval Task4
 '''
 
+negateWords = ["won't", "wouldn't", "shan't", "shouldn't", "can't", "cannot", "couldn't", "mustn't",
+               "isn't" "aren't" "wasn't" "weren't" "hasn't" "haven't" "hadn't" "doesn't" "don't" "didn't",
+               "not", "no", "never", "n't",
+               "wont", "wouldnt", "shant", "shouldnt", "cant", "couldnt", "mustnt", "isnt", "arent",
+               "wasnt", "werent", "hasnt", "havent", "hadnt", "doesnt", "dont", "didnt"]
 
 def train_and_trial(trn_file, test_file, clf, posit_lex_file='positive-words.txt', nega_lex_file='negative-words.txt',
                     pickled=False):
@@ -96,18 +102,88 @@ def get_objectivity(sentiment):
     return result
 
 
+def create_sentiment_sequence(iobs, senti_dictionary, negate_wds=negateWords):
+    """New idea in late March: label each iob with a sentiment based on punctuation boundaries, etc.
+    This part just does one sentence.
+    Break up the sentence by its punctuation. Between each punctuation boundary, count the
+    positive & negative sentiment words, and also track negation words.
+    Label all iobs within a punc window with the same polarity.
+    """
+    punctuation_list = [c for c in string.punctuation]
+    use_conj = False
+    if use_conj:
+        punctuation_list.extend(['CC'])
+    #indices for locations of punctuation, subjective words, and negation words
+    punc_idxs, subj_idxs, neg_idxs = [], [], []
+    polarities = []
+    for i, (w, pos, iob) in enumerate(iobs):
+        if w in punctuation_list or pos in punctuation_list:
+            punc_idxs.append(i)
+        if w in negate_wds:
+            neg_idxs.append(i)
+        polarity = sentiment_lookup(senti_dictionary, w, pos)
+        if polarity != 'neutral':
+            subj_idxs.append(i)
+            polarities.append(polarity)
+    #add punctuation at end if not there
+    if not punc_idxs:
+        punc_idxs.append(len(iobs)-1)
+    #print punc_idxs, neg_idxs
+    #print subj_idxs, polarities
+    #second pass to calculate polarities within each punc boundary
+    results = []
+    s_idx, n_idx = 0, 0
+    prev = -1
+    for p_idx in range(len(punc_idxs)):
+        negate = 1
+        curr_punc_idx = punc_idxs[p_idx]
+        while n_idx < len(neg_idxs) and neg_idxs[n_idx] < curr_punc_idx:
+            negate *= -1
+            n_idx += 1
+        pos_ctr, neg_ctr = 0, 0
+        while s_idx < len(subj_idxs) and subj_idxs[s_idx] < curr_punc_idx:
+            if polarities[s_idx] == 'positive':
+                pos_ctr += 1
+            elif polarities[s_idx] == 'negative':
+                neg_ctr += 1
+            s_idx += 1
+        if negate == 1:
+            this_chunk_tag = (pos_ctr, neg_ctr)
+        else:
+            this_chunk_tag = (neg_ctr, pos_ctr)
+        results.extend([this_chunk_tag] * (curr_punc_idx - prev))
+        prev = curr_punc_idx
+    #WE know there are sometimes bugs, ignore for now (last hours)
+    #if len(results) != len(iobs):
+    #    print "BUG"
+    # If there are not enough polarities, extend the last one
+    # If there are too many, the later processing will ignore the extras
+    len_r = len(results)
+    if len_r < len(iobs):
+        diff = len(iobs) - len_r
+        results.extend([results[len_r-1]] * diff)
+    return results
+
+
 def dep_features(sentence, i, parse):
     """ Create the features related to dependency parsing.
-    Assumes dependency parsing has already been done and our DepTree representation is passed in
+    Assumes dependency parsing has already been done and our DepTree representation is passed in.
+    Print some debugging information in some cases.
+    Returns a dictionary of feature values for the window around position i in sentence.
     """
-    word, _pos = sentence[i]
+    debug = False
+    word, pos = sentence[i]
     target = "%s-%d" % (word, i+1)
     if target in parse.elements:
         dep_node = parse.elements[target]
         dist_w = dep_node.closest_sentiment
         sent_w = dep_node.polarity_closest
     else:
-        print "IOB %s at posit %d not found in parse: %s" % (sentence[i], i+1, parse)
+        if pos != '.' and word != ',' and pos != 'CC' and pos != 'IN' and pos != 'TO'\
+                and pos != 'WDT' and pos != ':':
+            if debug:
+                #print "IOB %s at posit %d not found in parse:\n %s" % (sentence[i], i+1, parse)
+                print "IOB %s at posit %d not found in parse" % (sentence[i], i+1)
         dist_w = sys.maxint
         sent_w = 'neutral'
     #prevw stuff
@@ -115,14 +191,13 @@ def dep_features(sentence, i, parse):
         dist_p = "<START>"
         sent_p = "<START>"
     else:
-        prevw, _prevpos = sentence[i-1]
+        prevw, prevpos = sentence[i-1]
         target = "%s-%d" % (prevw, i)
         if target in parse.elements:
             dep_node = parse.elements[target]
             dist_p = dep_node.closest_sentiment
             sent_p = dep_node.polarity_closest
         else:
-            print "IOB %s at posit %d not found in parse: %s" % (sentence[i-1], i, parse)
             dist_p = sys.maxint
             sent_p = 'neutral'
     #next wd stuff
@@ -130,14 +205,13 @@ def dep_features(sentence, i, parse):
         dist_n = "<END>"
         sent_n = "<END>"
     else:
-        nextw, _nextpos = sentence[i+1]
+        nextw, nextpos = sentence[i+1]
         target = "%s-%d" % (nextw, i+2)
         if target in parse.elements:
             dep_node = parse.elements[target]
             dist_n = dep_node.closest_sentiment
             sent_n = dep_node.polarity_closest
         else:
-            print "IOB %s at posit %d not found in parse: %s" % (sentence[i+1], i+2, parse)
             dist_n = sys.maxint
             sent_n = 'neutral'
     return {'dep_distw': dist_w, 'dep_sent': sent_w, 'dep_distp': dist_p, 'dep_sentp': sent_p,
@@ -149,6 +223,7 @@ def sentiment_lookup(dict, word, pos):
     Return values: positive, negative, neutral.
     Uses stemming if not found with original word
     """
+    word = word.lower()
     result = senti_idx_aux(dict, word, pos)
     if result == 'neutral':
         stemmer = LancasterStemmer()
@@ -191,33 +266,37 @@ def senti_idx_aux(dict, word, pos):
 
 
 def compute_pr(c_iobs, g_iobs):
-    """Compute precision, recall, and F1
+    """Compute precision, recall, and F1 for aspect labeling task
+    (rough approach, only tracks "B" tags)
     """
+    debug = False
     tp = 0
     fp = 0
     n = 0
     print "num examples:", len(c_iobs)
-    #c_iobs = corrects['iob']
-    #g_iobs = guesses['iob']
     for i in range(len(c_iobs)):
         one_corr = c_iobs[i]
         one_guess = g_iobs[i]
         #just counting the first word in each aspect phrase
         begin_terms = [x[0] for x in one_corr if x[2].startswith('B')]
         n += len(begin_terms)
-        #print "n after %s: %d" %(one_corr, n)
-        #print "corr", begin_terms
+        print_this = False
+        #iterate through the guesses finding aspect term beginnings
         for j in range(len(one_guess)):
             if one_guess[j][2].startswith('B'):
-                #print "guess", one_guess[j]
                 if one_guess[j][0] in begin_terms:
                     tp += 1
                 else:
                     fp += 1
+                    print_this = True
+        if debug and (print_this or tp < len(begin_terms)):
+            print "FPs: %s true:\n %s;\n guess:\n %s" %(print_this, one_corr, one_guess)
     print "num terms:", n
     print "num guesses:", tp+fp
-    recall = float(tp)/n
-    if (tp+fp)>0:
+    recall = 0.
+    if n > 0:
+        recall = float(tp)/n
+    if (tp+fp) > 0:
         precision = float(tp)/(tp + fp)
     else:
         precision = 1.0
@@ -227,6 +306,26 @@ def compute_pr(c_iobs, g_iobs):
         f1 = 0
     print "Recall %.2f, Precision: %.2f, F1 %.2f" %(recall, precision, f1)
     return recall, precision, f1
+
+
+def compute_sent_acc(c_labels, g_labels):
+    corr_count = 0.
+    n = 0.
+    print "num examples:", len(c_labels)
+    for i in range(len(c_labels)):
+        one_corr = c_labels[i]
+        one_guess = g_labels[i]
+        for j in range(len(one_corr)):
+            if one_corr[j] == one_guess[j]:
+                corr_count += 1
+            n += 1
+    if n > 0:
+        acc = corr_count/n
+    else:
+        acc = 0.
+    print "correct:", corr_count, "actual:", n
+    print "Sentiment labeling acc", acc
+    return acc
 
 
 def get_liu_lexicon(filename):
@@ -338,11 +437,6 @@ def stanford_parse(sentences, ofile='dep_parse.txt'):
     return parses
 
 
-def parse_one_sent(sent):
-    os.popen('echo "'+sent+'" > ~/stanfordtemp.txt')
-    return os.popen('~/Documents/src/stanford-parser-full-2014-01-04/lexparser.sh ~/stanfordtemp.txt').readlines()
-
-
 def multi_sent(parse):
     '''Words with abbreviations in them fool the parser, like "4 hrs."
     '''
@@ -368,14 +462,14 @@ def get_dep(full_stanford_result):
     return result.strip()
 
 
-def add_dep_parse_features(original, parse_file, pickled=True, dictionary=False):
+def add_dep_parse_features(original, parse_file, pickled=True, dictionary=False, iobs=False):
     """Create the dependency tree dictionaries that we need for each sentence
     in the input corpus.
     Inputs:
     original: pickled version of our dictionary, or the dictionary itself,
     or the original XML file
     """
-    if pickled:
+    if pickled and not dictionary:
         f = open(original, 'rb')
         traind = cPickle.load(f)
         f.close()
@@ -388,7 +482,10 @@ def add_dep_parse_features(original, parse_file, pickled=True, dictionary=False)
     f.close()
     dep_trees = transform_dep_parse(lines)
     senti_dictionary = get_mpqa_lexicon()
-    new_dep_trees = integrate_dep_iob(traind['iob'], dep_trees, senti_dictionary)
+    if iobs:
+        new_dep_trees = integrate_dep_iob(traind, dep_trees, senti_dictionary)
+    else:
+        new_dep_trees = integrate_dep_iob(traind['iob'], dep_trees, senti_dictionary)
     return new_dep_trees
 
 
@@ -399,12 +496,15 @@ def integrate_dep_iob(iobs, dep_ps, senti_dict):
     result = dep_ps
     for i in range(len(iobs)):
         iob = iobs[i]
+        #print iob
         parse = dep_ps[i]
+        #print parse
         for j in range(len(iob)):
             (w, pos, _iob_label) = iob[j]
             polarity = sentiment_lookup(senti_dict, w, pos)
             if polarity != 'neutral':
                 result[i] = update_dist(parse, w, j, polarity)
+                #print "for w: %s, polarity %s, new result: %s" % (w, polarity, result[i])
     return result
 
 
@@ -423,6 +523,8 @@ def update_dist(parse, word, position, polarity):
         if distance < closest:
             parse.elements[node].closest_sentiment = distance
             parse.elements[node].polarity_closest = polarity
+        if distance == sys.maxint:
+            print "%s not found in parse: %s" % (target, parse)
     #print "update_dist ret:", parse
     return parse
 
@@ -543,9 +645,9 @@ def transform_dep_parse(parses):
     """
     results = []
     for p in parses:
+        #print p
         this_tree = DepTree()
         nodes = p.strip().split(')')
-        #print "nodes:", nodes
         for n in nodes:
             if n:
                 n = n.strip()
@@ -679,24 +781,25 @@ class DepTree:
         """NOTE: may not find the closest parent. I'm ok with this since
         later we track distances to find closest nodes
         """
-        #root will only ever have one child
-        kid = self.elements['ROOT-0'].children[0][1]
-        fringe = Queue()
-        fringe.push((kid, 'ROOT-0'))
-        seen = []
-        while True:
-            if fringe.isEmpty():
-                self.has_parents = True
-                return
-            state, parent = fringe.pop()
-            #print "popped: %s p: %s" % (state, parent)
-            if state in self.elements:
-                self.elements[state].parent.append(parent)
-            if not state in seen and state in self.elements:
-                seen.append(state)
-                children = self.find_children(state)
-                for (_, pair) in children:
-                    fringe.push((pair, state))
+        #sometimes, there is no root, like if there's a fragment. Punt in that case - empty parents
+        if 'ROOT-0' in self.elements:
+            #root will only ever have one child
+            kid = self.elements['ROOT-0'].children[0][1]
+            fringe = Queue()
+            fringe.push((kid, 'ROOT-0'))
+            seen = []
+            while True:
+                if fringe.isEmpty():
+                    self.has_parents = True
+                    return
+                state, parent = fringe.pop()
+                if state in self.elements:
+                    self.elements[state].parent.append(parent)
+                if not state in seen and state in self.elements:
+                    seen.append(state)
+                    children = self.find_children(state)
+                    for (_, pair) in children:
+                        fringe.push((pair, state))
 
 
 class DepTreeEntry:
@@ -726,18 +829,47 @@ class DepTreeEntry:
         return len(self.children)
 
 
-#not yet in use
-def create_features(token, tag):
-    if token[0] == '#':
-        yield "hashtag"
-        t = token[1:]
-        yield "token={}".format(t.lower())
-        yield "token,tag={},{}".format(t, tag)
-    elif token.isdigit():
-        yield "numeric"
+def K_fold_err_analysis(filename, parse_file,  k=5, p=0.15, pickled=False):
+    """Does K-fold cross-validation on the given filename, but only p percent of it
+    """
+
+    if pickled:
+        f = open(filename, 'rb')
+        traind = cPickle.load(f)
+        f.close()
     else:
-        yield "token={}".format(token.lower())
-        yield "token,tag={},{}".format(token, tag)
+        traind = XMLParser.create_exs(filename)
+    #####
+    n = int(len(traind['iob']) * p)
+    dep_parses = traind['iob']
+    #if use_dep_parse:
+    #    dep_parses = add_dep_parse_features(traind['iob'], parse_file, dictionary=True, iobs=True)
+    senti_dictionary = get_mpqa_lexicon()
+    kf = cross_validation.KFold(n, n_folds=k, indices=True)
+    tot_p, tot_r, tot_f1 = 0, 0, 0
+    for train, test in kf:
+        print "next fold, split size: %d/%d" %(len(train), len(test))
+        #print train
+        train_set = []
+        test_set = []
+        train_parse = []
+        test_parse = []
+        for i in train:
+            train_set.append(traind['iob'][i])
+            train_parse.append(dep_parses[i])
+        for i in test:
+            test_set.append(traind['iob'][i])
+            test_parse.append(dep_parses[i])
+        chunker = semevalTask4.ConsecutiveChunker(train_set, test_set, senti_dictionary, train_parse)
+        guesses = chunker.evaluate([test_set, test_parse])
+        r, p, f = compute_pr(test_set, guesses)
+        tot_p += p
+        tot_r += r
+        tot_f1 += f
+        #JUST ONE SPLIT FOR NOW!!!
+        return
+    print "ave Prec: %.2f, Rec: %.2f, F1: %.2f" %(tot_p/float(k), tot_r/float(k), tot_f1/float(k))
+
 
 #Main to create the dependency parse features for a corpus
 if __name__ == '__main__':
@@ -746,10 +878,5 @@ if __name__ == '__main__':
     create_parses_from_dict('train.pkl','train-parse.txt')
     semeval_util.create_parses_from_dict('Rest_train_v2.pkl','rest_train-parse.txt')
     """
-    #NOTE YET TESTED
-
-    new_dep_trees = add_dep_parse_features(original_dict, parse_filename)
-    iobs = original_dict['iob']
-    for (w, pos, tag) in iobs:
-        pass
-    pass
+    K_fold_err_analysis('../PycharmProjects/emnlp/Rest_train_v2.pkl',
+                              'rest_train-parse.txt', pickled=True)

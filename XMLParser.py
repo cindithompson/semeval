@@ -31,7 +31,6 @@ def pickle_laptop_data(filename):
 
 
 #the term, polarity, from, and to are attrib's of the aspectTerm elements
-#version that just assumes a single occ of each aspect term (or tags all seen as part of aspect term)
 def create_exs(filename):
     """ Create a set of training examples from a semeval XML file
     """
@@ -57,7 +56,8 @@ def create_exs(filename):
         if a_terms is not None:
             for at in a_terms:
                 terms.append(at.attrib['term'])
-                sentiments.append(at.attrib['polarity'])
+                if 'polarity' in at.attrib:
+                    sentiments.append(at.attrib['polarity'])
                 froms.append(int(at.attrib['from']))
                 tos.append(int(at.attrib['to']))
         aspects.append(terms)
@@ -79,8 +79,8 @@ def create_exs(filename):
 
 
 def new_create_POS_ex(sent, froms, tos):
-    '''Create the IOB & POS tagged sequence
-    '''
+    """Create the IOB & POS tagged sequence
+    """
     iob = []
     pos_tags = nltk.pos_tag(nltk.word_tokenize(sent.strip().encode('utf-8')))
     #print pos_tags
@@ -171,10 +171,7 @@ def create_POS_ex(sent, froms, tos):
     tos: end indexes of aspect terms in sent
     """
     iob = create_iob(sent, froms, tos)
-    print "created iob:", iob
     pos_tags = nltk.pos_tag(nltk.word_tokenize(sent))
-    print iob
-    print pos_tags
     result = []
     i_idx = 0
     for w, ptag in pos_tags:
@@ -189,7 +186,7 @@ def create_POS_ex(sent, froms, tos):
     return result
 
 
-def create_xml(orig, iobs, ids, indices, outfile='dump-answers.txt'):
+def create_xml(orig, iobs, ids, indices, sentiments=None, outfile='dump-answers.txt'):
     """Create the XML file for answer submission.
     Inputs:
     orig: text of original sentences
@@ -198,7 +195,6 @@ def create_xml(orig, iobs, ids, indices, outfile='dump-answers.txt'):
     outfile: name of file to write the XML to
     Returns: success indicator
     """
-    #f = open(outfile, 'w')
     f = codecs.open(outfile, mode='w', encoding='utf-8')
     f.write('<sentences>\n')
     for i in range(len(orig)):
@@ -206,16 +202,21 @@ def create_xml(orig, iobs, ids, indices, outfile='dump-answers.txt'):
         f.write('<text>'+orig[i]+'\n</text>\n')
         if len(iobs[i]) > 0:
             f.write('<aspectTerms>\n')
-            process_aspects(iobs[i], indices[i], f)
+            if not sentiments:
+                process_aspects(iobs[i], indices[i], ['neutral']*len(iobs[i]), f)
+            else:
+                process_aspects(iobs[i], indices[i], sentiments[i], f)
             f.write('</aspectTerms>\n')
         f.write('</sentence>\n')
     f.write('</sentences>\n')
     f.close()
 
 
-def process_aspects(iob, idxs, f):
+def process_aspects(iob, idxs, sentiments, f):
     in_term = False
     terms = []
+    curr_sentiment = None
+    senti_idx = 0
     start, end = 0, 0
     #print "idxs:" ,idxs
     for i in range(len(iob)):
@@ -227,27 +228,34 @@ def process_aspects(iob, idxs, f):
                 end = idxs[i][1]
                 terms.append(iob[i][0])
             elif iob[i][2].startswith('B'):
-                write_aterm(terms, start, end, f)
+                write_aterm(terms, start, end, curr_sentiment, f)
                 start = idxs[i][0]
                 end = idxs[i][1]
                 terms = [iob[i][0]]
+                curr_sentiment = sentiments[senti_idx]
+                senti_idx += 1
             else: #'O'
                 in_term = False
-                write_aterm(terms, start, end, f)
+                write_aterm(terms, start, end,  curr_sentiment, f)
         elif iob[i][2].startswith('B'):
-                in_term = True
-                start = idxs[i][0]
-                end = idxs[i][1]
-                terms = [iob[i][0]]
+            in_term = True
+            start = idxs[i][0]
+            end = idxs[i][1]
+            terms = [iob[i][0]]
+            curr_sentiment = sentiments[senti_idx]
+            senti_idx += 1
     if in_term:
-        write_aterm(terms, start, end, f)
+        write_aterm(terms, start, end, curr_sentiment, f)
 
 
-def write_aterm(words, start, end, f):
+def write_aterm(words, start, end, polarity, f):
     f.write('<aspectTerm term="')
     for w in words:
+        w = w.decode('utf-8')
         f.write(w)
-    f.write('" polarity="neutral" from="')
+    f.write('" polarity="')
+    f.write(polarity)
+    f.write('" from="')
     f.write(str(start))
     f.write('" to="')
     f.write(str(end))
