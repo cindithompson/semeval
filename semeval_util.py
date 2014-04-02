@@ -29,9 +29,11 @@ negateWords = ["won't", "wouldn't", "shan't", "shouldn't", "can't", "cannot", "c
                "wont", "wouldnt", "shant", "shouldnt", "cant", "couldnt", "mustnt", "isnt", "arent",
                "wasnt", "werent", "hasnt", "havent", "hadnt", "doesnt", "dont", "didnt"]
 
+
 def train_and_trial(trn_file, test_file, clf, posit_lex_file='positive-words.txt', nega_lex_file='negative-words.txt',
                     pickled=False):
-    """ Train on the training file and test on the testing file
+    """ Train on the training file and test on the testing file,
+    given a classifier, for the aspect extraction task.
     """
     if pickled:
         f = open(trn_file, 'rb')
@@ -49,14 +51,11 @@ def train_and_trial(trn_file, test_file, clf, posit_lex_file='positive-words.txt
     #chunker = ConsecutiveChunker(traind['iob'], senti_dictionary)
     chunker = clf.train(traind['iob'], senti_dictionary)
     print "done training"
-    '''
-    f = open('learned.pkl','wb')
-    cPickle.dump(chunker,f)
-    f.close()
-    '''
+
     guessed_iobs = chunker.evaluate(testd['iob'])
-    XMLParser.create_xml(testd['orig'],guessed_iobs,testd['id'],testd['idx'],'trial_answers.xml')
+    XMLParser.create_xml(testd['orig'], guessed_iobs,testd['id'],testd['idx'],'trial_answers.xml')
     compute_pr(testd['iob'], guessed_iobs)
+
 
 
 #We are not using this, it's just an example to play around with chunking from the NLTK book
@@ -426,15 +425,13 @@ def stanford_parse(sentences, ofile='dep_parse.txt'):
         parses.append(dep_part)
         f.write(dep_part)
         f.write('\n')
-    '''
-    f = open(ofile, 'w')
-    print "DONE PARSE"
-    for p in parses:
-        f.write(p)
-        f.write('\n')
-    '''
     f.close()
     return parses
+
+
+def parse_one_sent(words):
+    os.popen("echo '"+words+"' > ~/stanfordtemp.txt")
+    return os.popen('~/Documents/src/stanford-parser-full-2014-01-04/lexparser.sh ~/stanfordtemp.txt').readlines()
 
 
 def multi_sent(parse):
@@ -878,5 +875,25 @@ if __name__ == '__main__':
     create_parses_from_dict('train.pkl','train-parse.txt')
     semeval_util.create_parses_from_dict('Rest_train_v2.pkl','rest_train-parse.txt')
     """
-    K_fold_err_analysis('../PycharmProjects/emnlp/Rest_train_v2.pkl',
-                              'rest_train-parse.txt', pickled=True)
+    #K_fold_err_analysis('../PycharmProjects/emnlp/Rest_train_v2.pkl',
+    #                          'rest_train-parse.txt', pickled=True)
+    f = open('Laptop_train_v2.pkl', 'rb')
+    traind = cPickle.load(f)
+    f.close()
+    in_iob = False
+    tot_bs, num_cooc = 0, 0
+    num_sents = 0.
+    for sentence in traind['iob']:
+        num_sents += 1
+        for _w,_pos,tag in sentence:
+            if in_iob:
+                if tag.startswith('B'):
+                    tot_bs +=1
+                    num_cooc += 1
+                else:
+                    in_iob = False
+            elif tag.startswith('B'):
+                in_iob = True
+                tot_bs += 1
+    print "aspect terms: %d, coocs: %d" %(tot_bs, num_cooc)
+    print "num sents: %d, ave asps/sent %f" %(num_sents, tot_bs/num_sents)

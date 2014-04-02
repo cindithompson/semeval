@@ -212,7 +212,45 @@ def create_xml(orig, iobs, ids, indices, sentiments=None, outfile='dump-answers.
     f.close()
 
 
-def process_aspects(iob, idxs, sentiments, f):
+def process_aspects(iob, idxs, sentiments, f, use_iobs=True):
+    """Write the aspect term portion to the file.
+    use_iobs indicates whether to use IOB representation or just BO.
+    """
+    if use_iobs:
+        process_iob_aspects(iob, idxs, sentiments, f)
+    else:
+        process_bo_aspects(iob, idxs, sentiments, f)
+
+
+#TODO is test this
+def process_bo_aspects(bo, idxs, sentiments, f):
+    in_term = False
+    terms = []
+    curr_sentiment = None
+    senti_idx = 0
+    start, end = 0, 0
+    for i in range(len(iob)):
+        if in_term:
+            if iob[i][2].startswith('B'):
+                if end < idxs[i][0]:
+                    terms.append(' ' * (idxs[i][0]-end))
+                end = idxs[i][1]
+                terms.append(iob[i][0])
+            else: #'O'
+                in_term = False
+                write_aterm(terms, start, end,  curr_sentiment, f)
+        elif iob[i][2].startswith('B'):
+            in_term = True
+            start = idxs[i][0]
+            end = idxs[i][1]
+            terms = [iob[i][0]]
+            curr_sentiment = sentiments[senti_idx]
+            senti_idx += 1
+    if in_term:
+        write_aterm(terms, start, end, curr_sentiment, f)
+
+
+def process_iob_aspects(iob, idxs, sentiments, f):
     in_term = False
     terms = []
     curr_sentiment = None
@@ -262,32 +300,6 @@ def write_aterm(words, start, end, polarity, f):
     f.write('"/>\n')
 
 
-def create_POS_ex_old(sentence, words):
-    """ OLDER VERSION: assumes each aspect term occurs once.
-    Create the POS-tagged IOB part of the example.
-    Input: sentence: original text of sentence;
-    words: aspect phrases in the sentence
-    """
-    #split aspect phrases in words into pieces
-    starts, continuations = split_words(words)
-    pos_tags = nltk.pos_tag(nltk.word_tokenize(sentence))
-    iob = []
-    in_tag = False
-    for w, ptag in pos_tags:
-        if in_tag:
-            if w in continuations:
-                iob.append((w, ptag, 'I-Aspect'))
-            else:
-                in_tag = False
-                iob.append((w, ptag, 'O'))
-        elif w in starts:
-            iob.append((w, ptag, 'B-Aspect'))
-            in_tag = True
-        else:
-            iob.append((w, ptag, 'O'))
-    return iob
-
-
 def split_words(words):
     """Given a phrase, return a tuple: the first word in the phrase (as a list),
     and a list of the "tail" of the phrase, if any
@@ -299,33 +311,6 @@ def split_words(words):
         first_wds.append(tokens[0])
         rest_wds.extend(tokens[1:])
     return first_wds, rest_wds
-
-
-def create_exs_older(filename):
-    """ Create a set of training examples from a semeval XML file
-    """
-    examples = []
-    polarities = []
-    text = []
-    tree = ET.parse(filename)
-    root = tree.getroot()
-    for sentence in root.findall('sentence'):
-        #words = sentence[0].text #assumes text comes first
-        words = sentence.find('text').text.strip()
-        a_terms = sentence.find('aspectTerms')
-        froms, tos = [], []
-        sentiments = []
-        if a_terms is not None:
-            for at in a_terms:
-                froms.append(int(at.attrib['from']))
-                tos.append(int(at.attrib['to']))
-                sentiments.append(at.attrib['polarity'])
-        ###seq = create_one_ex(words, froms, tos)
-        seq = create_one_withPOS(words, froms, tos)
-        examples.append(seq)
-        polarities.append(sentiments)
-        text.append(words)
-    return {'orig': text, 'iob': examples, 'polarity': polarities}
 
 
 def dbg(inpt):

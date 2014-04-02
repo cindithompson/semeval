@@ -18,7 +18,10 @@ import numpy as np
 use_unk = True
 stemming = True
 use_dep_parse = False
-use_svm = True
+use_svm = False
+#indicates IOB encoding versus BO encoding of terms
+#TODO is make this a class variable so can set from one place when prepping submissions
+use_iob = False
 
 
 class ConsecutiveChunkTagger(nltk.TaggerI):
@@ -39,6 +42,9 @@ class ConsecutiveChunkTagger(nltk.TaggerI):
                 if use_dep_parse:
                     dep_features = semeval_util.dep_features(untagged_sent, i, dep_parses[idx])
                     featureset.update(dep_features)
+                if not use_iob:
+                    if tag.startswith('I'):
+                        tag = 'B-Aspect'
                 train_set.append((featureset, tag))
                 history.append(tag)
             idx += 1
@@ -126,7 +132,6 @@ class ConsecutiveChunker(nltk.ChunkParserI):
                 for (w, t, _c) in tagged_sent:
                     ans.append((w, t, self.parse(v_idx)))
                     v_idx += 1
-                #print "appending to guesses:", ans
                 results.append(ans)
             return results
         else:
@@ -251,7 +256,6 @@ def train_and_test(filename, parse_file, use_deps=False,
     chunker = ConsecutiveChunker(train, test, senti_dictionary, dep_parses)
     guessed_iobs = chunker.evaluate([test,test_deps])
     semeval_util.compute_pr(test, guessed_iobs)
-    #print chunker.evaluate(test)
 
 
 def train_and_trial(trn_file, test_file, parse_file_train, parse_file_test, use_dep=False,
